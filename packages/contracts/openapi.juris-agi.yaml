@@ -1,0 +1,347 @@
+openapi: 3.1.0
+info:
+  title: JURIS-AGI API
+  description: Neuro-symbolic AGI system for legal analysis and investment due diligence
+  version: 1.0.0
+  contact:
+    name: JURIS-AGI Team
+
+servers:
+  - url: https://juris-agi.vercel.app/api
+    description: Production
+  - url: http://localhost:3000/api
+    description: Local development
+
+tags:
+  - name: Analysis
+    description: AGI analysis endpoints
+  - name: Context
+    description: Context building for analysis
+  - name: Reports
+    description: Report generation
+  - name: Health
+    description: Health check endpoints
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /analyze:
+    post:
+      tags: [Analysis]
+      summary: Run JURIS-AGI analysis on a deal
+      operationId: analyze
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeRequest'
+      responses:
+        '200':
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyzeResponse'
+        '400':
+          description: Invalid request
+        '500':
+          description: Analysis failed
+
+  /analyze/stream:
+    post:
+      tags: [Analysis]
+      summary: Stream JURIS-AGI analysis results
+      operationId: analyzeStream
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnalyzeRequest'
+      responses:
+        '200':
+          description: Streaming analysis result
+          content:
+            text/event-stream:
+              schema:
+                type: string
+
+  /context/build:
+    post:
+      tags: [Context]
+      summary: Build evidence context for analysis
+      operationId: buildContext
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BuildContextRequest'
+      responses:
+        '200':
+          description: Built context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BuildContextResponse'
+
+  /reports/generate:
+    post:
+      tags: [Reports]
+      summary: Generate analysis report
+      operationId: generateReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateReportRequest'
+      responses:
+        '200':
+          description: Generated report
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateReportResponse'
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - service
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, error]
+        service:
+          type: string
+        version:
+          type: string
+        evidence_api:
+          type: string
+          enum: [connected, disconnected]
+
+    AnalyzeRequest:
+      type: object
+      required:
+        - deal_id
+      properties:
+        deal_id:
+          type: string
+          description: Identifier for the deal/company to analyze
+        question:
+          type: string
+          description: Specific question to answer
+        claims:
+          type: array
+          items:
+            type: object
+          description: Optional direct claims for demo mode (bypasses Evidence API)
+        analysis_type:
+          type: string
+          enum: [full, quick, targeted]
+          default: full
+        include_reasoning:
+          type: boolean
+          default: true
+          description: Include step-by-step reasoning traces
+        constraints:
+          $ref: '#/components/schemas/AnalysisConstraints'
+
+    AnalysisConstraints:
+      type: object
+      properties:
+        max_claims:
+          type: integer
+          default: 100
+        min_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.5
+        focus_areas:
+          type: array
+          items:
+            type: string
+          description: Specific areas to focus analysis on
+
+    ReasoningStep:
+      type: object
+      required:
+        - step_id
+        - type
+        - content
+      properties:
+        step_id:
+          type: string
+        type:
+          type: string
+          enum: [observation, hypothesis, verification, conclusion, warning]
+        content:
+          type: string
+        confidence:
+          type: number
+        supporting_claims:
+          type: array
+          items:
+            type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    Finding:
+      type: object
+      required:
+        - finding_id
+        - category
+        - title
+        - description
+        - severity
+      properties:
+        finding_id:
+          type: string
+        category:
+          type: string
+          enum: [strength, weakness, opportunity, threat, neutral]
+        title:
+          type: string
+        description:
+          type: string
+        severity:
+          type: string
+          enum: [critical, high, medium, low, info]
+        confidence:
+          type: number
+        supporting_claims:
+          type: array
+          items:
+            type: string
+        reasoning_trace:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReasoningStep'
+
+    AnalyzeResponse:
+      type: object
+      required:
+        - analysis_id
+        - deal_id
+        - status
+      properties:
+        analysis_id:
+          type: string
+        deal_id:
+          type: string
+        status:
+          type: string
+          enum: [completed, partial, failed]
+        summary:
+          type: string
+          description: Executive summary of the analysis
+        recommendation:
+          type: string
+          enum: [strong_invest, invest, neutral, caution, strong_avoid]
+        confidence:
+          type: number
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Finding'
+        reasoning_trace:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReasoningStep'
+        conflicts_detected:
+          type: array
+          items:
+            type: object
+        claims_analyzed:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    BuildContextRequest:
+      type: object
+      required:
+        - deal_id
+      properties:
+        deal_id:
+          type: string
+        question:
+          type: string
+        max_claims:
+          type: integer
+          default: 100
+        min_confidence:
+          type: number
+          default: 0.5
+
+    BuildContextResponse:
+      type: object
+      required:
+        - context_id
+        - claims_count
+      properties:
+        context_id:
+          type: string
+        claims_count:
+          type: integer
+        summary:
+          type: object
+
+    GenerateReportRequest:
+      type: object
+      required:
+        - analysis_id
+      properties:
+        analysis_id:
+          type: string
+        format:
+          type: string
+          enum: [pdf, markdown, json]
+          default: markdown
+        include_sections:
+          type: array
+          items:
+            type: string
+            enum: [executive_summary, findings, reasoning, recommendations, appendix]
+
+    GenerateReportResponse:
+      type: object
+      required:
+        - report_id
+        - format
+      properties:
+        report_id:
+          type: string
+        format:
+          type: string
+        content:
+          type: string
+          description: Report content (for markdown/json) or download URL (for PDF)
+        download_url:
+          type: string
+          format: uri
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+security:
+  - BearerAuth: []

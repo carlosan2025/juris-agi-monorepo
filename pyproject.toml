@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "juris-agi-monorepo"
+version = "1.0.0"
+description = "JURIS-AGI Monorepo - Evidence Repository + Main AGI Application"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = [
+    "apps/evidence-api/tests",
+    "apps/juris-agi-web/python/tests",
+    "packages/sdk-py/tests"
+]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+extend-exclude = '''
+/(
+    node_modules
+    | .next
+    | dist
+)/
+'''
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+select = ["E", "F", "I", "N", "W", "UP"]
+exclude = ["node_modules", ".next", "dist"]

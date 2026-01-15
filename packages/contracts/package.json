@@ -1,0 +1,21 @@
+{
+  "name": "@juris-agi/contracts",
+  "version": "1.0.0",
+  "description": "Shared OpenAPI specs and JSON schemas for JURIS-AGI",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "validate": "npx @redocly/cli lint openapi.*.yaml",
+    "generate:ts": "npx openapi-typescript openapi.evidence.yaml -o ./generated/evidence.ts && npx openapi-typescript openapi.juris-agi.yaml -o ./generated/juris-agi.ts",
+    "build": "npm run validate && npm run generate:ts"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^1.6.0",
+    "openapi-typescript": "^6.7.0"
+  },
+  "files": [
+    "openapi.*.yaml",
+    "schemas/*.json",
+    "generated/*.ts"
+  ]
+}

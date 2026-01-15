@@ -1,0 +1,26 @@
+{
+  "name": "juris-agi-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "JURIS-AGI Monorepo - Evidence Repository + Main AGI Application",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=apps/juris-agi-web",
+    "build:web": "npm run build --workspace=apps/juris-agi-web",
+    "build:contracts": "npm run build --workspace=packages/contracts",
+    "build:sdk": "npm run build --workspace=packages/sdk-ts",
+    "build:all": "npm run build:contracts && npm run build:sdk && npm run build:web",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules"
+  },
+  "devDependencies": {
+    "turbo": "^1.12.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

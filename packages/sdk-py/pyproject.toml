@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "juris-agi-sdk"
+version = "1.0.0"
+description = "Python SDK for JURIS-AGI services"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "JURIS-AGI Team"}
+]
+
+dependencies = [
+    "httpx>=0.24.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

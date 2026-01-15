@@ -1,0 +1,27 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "rewrites": [
+    {
+      "source": "/api/analyze",
+      "destination": "/api/analyze.py"
+    },
+    {
+      "source": "/api/health",
+      "destination": "/api/health.py"
+    }
+  ],
+  "functions": {
+    "api/*.py": {
+      "runtime": "python3.11",
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "env": {
+    "PYTHONPATH": "python"
+  }
+}

@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+.next/
+.turbo/
+*.egg-info/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary
+*.tmp
+*.temp
+_temp_*
+
+# Generated
+packages/contracts/generated/
+packages/sdk-ts/src/evidence/
+packages/sdk-ts/src/juris-agi/
+
+# Local data
+data/
+*.sqlite
+*.db
