@@ -48,3 +48,7 @@ packages/sdk-ts/src/juris-agi/
 data/
 *.sqlite
 *.db
+# Environment files with secrets
+.env.production
+.env.local
+.env*.local

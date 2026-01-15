@@ -17,6 +17,6 @@
     "typescript": "^5.3.0"
   },
   "peerDependencies": {
-    "@juris-agi/contracts": "workspace:*"
+    "@juris-agi/contracts": "*"
   }
 }
