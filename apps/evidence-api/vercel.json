@@ -1,8 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "version": 2,
-  "buildCommand": "echo 'No frontend build needed'",
-  "outputDirectory": "api",
   "rewrites": [
     {
       "source": "/api/v1/:path*",
@@ -13,19 +11,10 @@
       "destination": "/api/test.py"
     }
   ],
-  "functions": {
-    "api/index.py": {
-      "maxDuration": 60,
-      "memory": 1024
-    }
-  },
   "crons": [
     {
       "path": "/api/v1/worker/cron/process",
       "schedule": "*/5 * * * *"
     }
-  ],
-  "env": {
-    "PYTHONPATH": "src"
-  }
+  ]
 }
