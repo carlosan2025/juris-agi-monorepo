@@ -8,20 +8,21 @@ datasource db {
 }
 
 model Company {
-  id              String          @id @default(cuid())
+  id              String            @id @default(cuid())
   name            String
-  slug            String          @unique
-  industryProfile IndustryProfile @default(GENERIC)
-  settings        Json            @default("{}")
+  slug            String            @unique
+  industryProfile IndustryProfile   @default(GENERIC)
+  settings        Json              @default("{}")
   logoUrl         String?
-  domain          String?         @unique
-  timezone        String          @default("UTC")
-  currency        String          @default("USD")
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  domain          String?           @unique
+  timezone        String            @default("UTC")
+  currency        String            @default("USD")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
   documents       Document[]
   invitations     Invitation[]
   mandates        Mandate[]
+  mandateTemplates MandateTemplate[]
   portfolios      Portfolio[]
   users           User[]
 
@@ -29,28 +30,35 @@ model Company {
 }
 
 model User {
-  id                   String                   @id @default(cuid())
-  name                 String?
-  email                String                   @unique
-  emailVerified        DateTime?
-  image                String?
-  password             String?
-  createdAt            DateTime                 @default(now())
-  updatedAt            DateTime                 @updatedAt
-  companyId            String?
-  companyRole          CompanyRole              @default(MEMBER)
-  legacyRole           String                   @default("analyst")
-  isPlatformAdmin      Boolean                  @default(false)
-  accounts             Account[]
-  decisions            DecisionRecord[]
-  uploadedDocuments    Document[]
-  exceptions           Exception[]
-  createdBaselines     MandateBaselineVersion[] @relation("BaselineCreatedBy")
-  publishedBaselines   MandateBaselineVersion[] @relation("BaselinePublishedBy")
-  mandateMemberships   MandateMember[]
-  portfolioMemberships PortfolioMember[]
-  sessions             Session[]
-  company              Company?                 @relation(fields: [companyId], references: [id])
+  id                              String                      @id @default(cuid())
+  name                            String?
+  email                           String                      @unique
+  emailVerified                   DateTime?
+  image                           String?
+  password                        String?
+  createdAt                       DateTime                    @default(now())
+  updatedAt                       DateTime                    @updatedAt
+  companyId                       String?
+  companyRole                     CompanyRole                 @default(MEMBER)
+  legacyRole                      String                      @default("analyst")
+  isPlatformAdmin                 Boolean                     @default(false)
+  accounts                        Account[]
+  decisions                       DecisionRecord[]
+  uploadedDocuments               Document[]
+  exceptions                      Exception[]
+  createdBaselines                MandateBaselineVersion[]    @relation("BaselineCreatedBy")
+  publishedBaselines              MandateBaselineVersion[]    @relation("BaselinePublishedBy")
+  mandateMemberships              MandateMember[]
+  portfolioMemberships            PortfolioMember[]
+  sessions                        Session[]
+  company                         Company?                    @relation(fields: [companyId], references: [id])
+  // Portfolio Baseline relations
+  createdPortfolioBaselines       PortfolioBaselineVersion[]  @relation("PortfolioBaselineCreatedBy")
+  submittedPortfolioBaselines     PortfolioBaselineVersion[]  @relation("PortfolioBaselineSubmittedBy")
+  approvedPortfolioBaselines      PortfolioBaselineVersion[]  @relation("PortfolioBaselineApprovedBy")
+  rejectedPortfolioBaselines      PortfolioBaselineVersion[]  @relation("PortfolioBaselineRejectedBy")
+  publishedPortfolioBaselines     PortfolioBaselineVersion[]  @relation("PortfolioBaselinePublishedBy")
+  updatedPortfolioBaselineModules PortfolioBaselineModule[]   @relation("PortfolioBaselineModuleUpdatedBy")
 
   @@index([companyId])
   @@index([email])
@@ -304,21 +312,26 @@ model DecisionRecord {
 }
 
 model Portfolio {
-  id            String            @id @default(cuid())
-  companyId     String
-  mandateId     String?
-  name          String
-  description   String?
-  portfolioType PortfolioType     @default(FUND)
-  status        PortfolioStatus   @default(ACTIVE)
-  constraints   Json              @default("{}")
-  composition   Json              @default("{}")
-  metrics       Json              @default("{}")
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-  company       Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  mandate       Mandate?          @relation(fields: [mandateId], references: [id])
-  members       PortfolioMember[]
+  id                        String                      @id @default(cuid())
+  companyId                 String
+  mandateId                 String?
+  name                      String
+  description               String?
+  portfolioType             PortfolioType               @default(FUND)
+  status                    PortfolioStatus             @default(ACTIVE)
+  constraints               Json                        @default("{}")
+  composition               Json                        @default("{}")
+  metrics                   Json                        @default("{}")
+  createdAt                 DateTime                    @default(now())
+  updatedAt                 DateTime                    @updatedAt
+  // Active baseline - the currently published baseline version
+  activeBaselineVersionId   String?                     @unique
+  company                   Company                     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  mandate                   Mandate?                    @relation(fields: [mandateId], references: [id])
+  members                   PortfolioMember[]
+  // Baseline relations
+  baselineVersions          PortfolioBaselineVersion[]  @relation("PortfolioBaselines")
+  activeBaseline            PortfolioBaselineVersion?   @relation("ActivePortfolioBaseline", fields: [activeBaselineVersionId], references: [id])
 
   @@index([companyId])
   @@index([mandateId])
@@ -473,4 +486,145 @@ enum PortfolioAccessLevel {
   MAKER
   CHECKER
   VIEWER
+}
+
+// =============================================================================
+// PORTFOLIO BASELINE (CONSTITUTION) MODELS
+// =============================================================================
+// The Portfolio Baseline is the governance constitution for a portfolio.
+// Key invariants:
+// 1. One Portfolio has exactly ONE active Baseline at any time
+// 2. A Baseline is versioned (v1, v2, v3…)
+// 3. A Baseline is portfolio-wide (not per mandate)
+// 4. Mandates live inside the Baseline and specialize it
+// 5. No Cases can be created unless a Baseline is PUBLISHED
+// 6. Old Baselines are immutable once archived
+// =============================================================================
+
+model PortfolioBaselineVersion {
+  id              String                    @id @default(cuid())
+  portfolioId     String
+  versionNumber   Int
+  status          PortfolioBaselineStatus   @default(DRAFT)
+  schemaVersion   Int                       @default(1)
+  parentVersionId String?
+  createdAt       DateTime                  @default(now())
+  createdById     String
+
+  // Submission for approval
+  submittedAt     DateTime?
+  submittedById   String?
+
+  // Approval (by checker or admin)
+  approvedAt      DateTime?
+  approvedById    String?
+  rejectedAt      DateTime?
+  rejectedById    String?
+  rejectionReason String?                   @db.Text
+
+  // Publishing (happens after approval)
+  publishedAt     DateTime?
+  publishedById   String?
+  changeSummary   String?                   @db.Text
+  contentHash     String?
+
+  // Relations
+  portfolio       Portfolio                 @relation("PortfolioBaselines", fields: [portfolioId], references: [id], onDelete: Cascade)
+  parentVersion   PortfolioBaselineVersion? @relation("BaselineVersionHistory", fields: [parentVersionId], references: [id])
+  childVersions   PortfolioBaselineVersion[] @relation("BaselineVersionHistory")
+  createdBy       User                      @relation("PortfolioBaselineCreatedBy", fields: [createdById], references: [id])
+  submittedBy     User?                     @relation("PortfolioBaselineSubmittedBy", fields: [submittedById], references: [id])
+  approvedBy      User?                     @relation("PortfolioBaselineApprovedBy", fields: [approvedById], references: [id])
+  rejectedBy      User?                     @relation("PortfolioBaselineRejectedBy", fields: [rejectedById], references: [id])
+  publishedBy     User?                     @relation("PortfolioBaselinePublishedBy", fields: [publishedById], references: [id])
+  modules         PortfolioBaselineModule[]
+  activePortfolio Portfolio?                @relation("ActivePortfolioBaseline")
+
+  @@unique([portfolioId, versionNumber])
+  @@index([portfolioId])
+  @@index([status])
+  @@index([createdById])
+}
+
+model PortfolioBaselineModule {
+  id                String                       @id @default(cuid())
+  baselineVersionId String
+  moduleType        PortfolioBaselineModuleType
+  schemaVersion     Int                          @default(1)
+  payload           Json                         @default("{}")
+  isComplete        Boolean                      @default(false)
+  isValid           Boolean                      @default(false)
+  validationErrors  Json?
+  createdAt         DateTime                     @default(now())
+  updatedAt         DateTime                     @updatedAt
+  updatedById       String?
+
+  // Relations
+  baselineVersion   PortfolioBaselineVersion     @relation(fields: [baselineVersionId], references: [id], onDelete: Cascade)
+  updatedBy         User?                        @relation("PortfolioBaselineModuleUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([baselineVersionId, moduleType])
+  @@index([baselineVersionId])
+  @@index([moduleType])
+}
+
+enum PortfolioBaselineStatus {
+  DRAFT
+  PENDING_APPROVAL
+  PUBLISHED
+  ARCHIVED
+  REJECTED
+}
+
+enum PortfolioBaselineModuleType {
+  MANDATES
+  EXCLUSIONS
+  RISK_APPETITE
+  GOVERNANCE_THRESHOLDS
+  REPORTING_OBLIGATIONS
+  EVIDENCE_ADMISSIBILITY
+}
+
+// =============================================================================
+// MANDATE TEMPLATE LIBRARY
+// =============================================================================
+// Pre-built mandate templates that clients can use to quickly create mandates.
+// Templates can be:
+// - SYSTEM: Platform-wide templates available to all companies
+// - COMPANY: Custom templates created by a company for their own use
+// =============================================================================
+
+model MandateTemplate {
+  id              String               @id @default(cuid())
+  name            String
+  type            MandateTemplateType
+  description     String               @db.Text
+  industry        IndustryProfile
+  isDefault       Boolean              @default(false)
+  isSystem        Boolean              @default(false)
+  mandateData     Json                 // Full mandate definition (Omit<MandateDefinition, 'id'>)
+  version         Int                  @default(1)
+  category        String?              // Optional grouping (e.g., "Sector Focus", "Stage Focus")
+  tags            String[]             @default([])
+
+  // Company ownership (null for system templates)
+  companyId       String?
+  company         Company?             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  // Audit fields
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  createdById     String?
+
+  @@unique([companyId, name, industry])
+  @@index([industry])
+  @@index([companyId])
+  @@index([isSystem])
+  @@index([type])
+}
+
+enum MandateTemplateType {
+  PRIMARY
+  THEMATIC
+  CARVEOUT
 }
