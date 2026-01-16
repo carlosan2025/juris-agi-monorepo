@@ -1,0 +1,476 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id              String          @id @default(cuid())
+  name            String
+  slug            String          @unique
+  industryProfile IndustryProfile @default(GENERIC)
+  settings        Json            @default("{}")
+  logoUrl         String?
+  domain          String?         @unique
+  timezone        String          @default("UTC")
+  currency        String          @default("USD")
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  documents       Document[]
+  invitations     Invitation[]
+  mandates        Mandate[]
+  portfolios      Portfolio[]
+  users           User[]
+
+  @@index([slug])
+}
+
+model User {
+  id                   String                   @id @default(cuid())
+  name                 String?
+  email                String                   @unique
+  emailVerified        DateTime?
+  image                String?
+  password             String?
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  companyId            String?
+  companyRole          CompanyRole              @default(MEMBER)
+  legacyRole           String                   @default("analyst")
+  isPlatformAdmin      Boolean                  @default(false)
+  accounts             Account[]
+  decisions            DecisionRecord[]
+  uploadedDocuments    Document[]
+  exceptions           Exception[]
+  createdBaselines     MandateBaselineVersion[] @relation("BaselineCreatedBy")
+  publishedBaselines   MandateBaselineVersion[] @relation("BaselinePublishedBy")
+  mandateMemberships   MandateMember[]
+  portfolioMemberships PortfolioMember[]
+  sessions             Session[]
+  company              Company?                 @relation(fields: [companyId], references: [id])
+
+  @@index([companyId])
+  @@index([email])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Invitation {
+  id              String           @id @default(cuid())
+  token           String           @unique @default(cuid())
+  companyId       String
+  email           String
+  name            String?
+  role            CompanyRole      @default(MEMBER)
+  portfolioAccess Json             @default("[]")
+  invitedById     String
+  status          InvitationStatus @default(PENDING)
+  createdAt       DateTime         @default(now())
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  company         Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([email])
+  @@index([token])
+  @@index([status])
+}
+
+model Mandate {
+  id               String                   @id @default(cuid())
+  companyId        String
+  name             String
+  description      String?
+  status           MandateStatus            @default(DRAFT)
+  activeBaselineId String?                  @unique
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  cases            Case[]
+  activeBaseline   MandateBaselineVersion?  @relation("ActiveBaseline", fields: [activeBaselineId], references: [id])
+  company          Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  baselines        MandateBaselineVersion[] @relation("MandateBaselines")
+  members          MandateMember[]
+  portfolios       Portfolio[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@index([status])
+}
+
+model MandateMember {
+  id        String      @id @default(cuid())
+  mandateId String
+  userId    String
+  role      MandateRole @default(MEMBER)
+  addedAt   DateTime    @default(now())
+  mandate   Mandate     @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([mandateId, userId])
+  @@index([mandateId])
+  @@index([userId])
+}
+
+model MandateBaselineVersion {
+  id            String                  @id @default(cuid())
+  mandateId     String
+  version       Int
+  status        BaselineStatus          @default(DRAFT)
+  createdById   String
+  publishedById String?
+  createdAt     DateTime                @default(now())
+  publishedAt   DateTime?
+  archivedAt    DateTime?
+  changeSummary String?
+  cases         Case[]
+  activeMandate Mandate?                @relation("ActiveBaseline")
+  modules       MandateBaselineModule[]
+  createdBy     User                    @relation("BaselineCreatedBy", fields: [createdById], references: [id])
+  mandate       Mandate                 @relation("MandateBaselines", fields: [mandateId], references: [id], onDelete: Cascade)
+  publishedBy   User?                   @relation("BaselinePublishedBy", fields: [publishedById], references: [id])
+
+  @@unique([mandateId, version])
+  @@index([mandateId])
+  @@index([status])
+}
+
+model MandateBaselineModule {
+  id               String                 @id @default(cuid())
+  baselineId       String
+  moduleType       BaselineModuleType
+  schemaVersion    String                 @default("1.0")
+  payload          Json
+  isValid          Boolean                @default(false)
+  validationErrors Json?
+  updatedAt        DateTime               @updatedAt
+  baseline         MandateBaselineVersion @relation(fields: [baselineId], references: [id], onDelete: Cascade)
+
+  @@unique([baselineId, moduleType])
+  @@index([baselineId])
+}
+
+model Case {
+  id             String                 @id @default(cuid())
+  mandateId      String
+  baselineId     String
+  name           String
+  description    String?
+  caseType       CaseType               @default(DEAL)
+  status         CaseStatus             @default(INTAKE)
+  currentStep    Int                    @default(3)
+  targetName     String?
+  targetSector   String?
+  targetMetadata Json?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  baseline       MandateBaselineVersion @relation(fields: [baselineId], references: [id])
+  mandate        Mandate                @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  claims         Claim[]
+  decision       DecisionRecord?
+  documents      Document[]
+  exceptions     Exception[]
+
+  @@index([mandateId])
+  @@index([status])
+  @@index([baselineId])
+}
+
+model Document {
+  id            String         @id @default(cuid())
+  companyId     String
+  caseId        String?
+  filename      String
+  originalName  String
+  mimeType      String
+  fileSize      Int
+  storageKey    String
+  documentType  String         @default("other")
+  status        DocumentStatus @default(UPLOADED)
+  pageCount     Int?
+  extractedText String?
+  metadata      Json?
+  uploadedById  String
+  uploadedAt    DateTime       @default(now())
+  processedAt   DateTime?
+  claims        Claim[]
+  case          Case?          @relation(fields: [caseId], references: [id])
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  uploadedBy    User           @relation(fields: [uploadedById], references: [id])
+
+  @@index([companyId])
+  @@index([caseId])
+  @@index([status])
+}
+
+model Claim {
+  id           String        @id @default(cuid())
+  caseId       String
+  documentId   String
+  claimType    String
+  field        String
+  value        Json
+  unit         String?
+  confidence   Float         @default(0)
+  polarity     ClaimPolarity @default(NEUTRAL)
+  status       ClaimStatus   @default(PROPOSED)
+  pageNumber   Int?
+  section      String?
+  quote        String?
+  approvedById String?
+  notes        String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  case         Case          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  document     Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([caseId])
+  @@index([documentId])
+  @@index([status])
+}
+
+model Exception {
+  id            String          @id @default(cuid())
+  caseId        String
+  ruleId        String
+  ruleName      String
+  status        ExceptionStatus @default(PENDING)
+  justification String?
+  justifiedById String?
+  scope         String?
+  conditions    String?
+  signedOffAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  case          Case            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  justifiedBy   User?           @relation(fields: [justifiedById], references: [id])
+
+  @@index([caseId])
+  @@index([status])
+}
+
+model DecisionRecord {
+  id              String                 @id @default(cuid())
+  caseId          String                 @unique
+  decision        DecisionType
+  classification  DecisionClassification @default(STANDARD)
+  rationale       String
+  conditions      String?
+  createPrecedent Boolean                @default(false)
+  precedentLabel  String?
+  precedentWeight PrecedentWeight?
+  decidedById     String
+  decidedAt       DateTime               @default(now())
+  auditTrail      Json                   @default("[]")
+  case            Case                   @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  decidedBy       User                   @relation(fields: [decidedById], references: [id])
+
+  @@index([caseId])
+  @@index([decision])
+}
+
+model Portfolio {
+  id            String            @id @default(cuid())
+  companyId     String
+  mandateId     String?
+  name          String
+  description   String?
+  portfolioType PortfolioType     @default(FUND)
+  status        PortfolioStatus   @default(ACTIVE)
+  constraints   Json              @default("{}")
+  composition   Json              @default("{}")
+  metrics       Json              @default("{}")
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  company       Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  mandate       Mandate?          @relation(fields: [mandateId], references: [id])
+  members       PortfolioMember[]
+
+  @@index([companyId])
+  @@index([mandateId])
+  @@index([status])
+}
+
+model PortfolioMember {
+  id          String               @id @default(cuid())
+  portfolioId String
+  userId      String
+  accessLevel PortfolioAccessLevel @default(VIEWER)
+  addedAt     DateTime             @default(now())
+  portfolio   Portfolio            @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([portfolioId, userId])
+  @@index([portfolioId])
+  @@index([userId])
+}
+
+enum IndustryProfile {
+  VENTURE_CAPITAL
+  INSURANCE
+  PHARMA
+  GENERIC
+}
+
+enum CompanyRole {
+  OWNER
+  ORG_ADMIN
+  MANDATE_ADMIN
+  MEMBER
+  COMPLIANCE
+  RISK
+  FINANCE
+  IC_MEMBER
+  IC_CHAIR
+  VIEWER
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum MandateStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum MandateRole {
+  MANDATE_ADMIN
+  MEMBER
+  REVIEWER
+  VIEWER
+}
+
+enum BaselineStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum BaselineModuleType {
+  MANDATE
+  EXCLUSIONS
+  RISK_APPETITE
+  GOVERNANCE_THRESHOLDS
+  REPORTING_OBLIGATIONS
+}
+
+enum CaseType {
+  DEAL
+  UNDERWRITING
+  ASSESSMENT
+}
+
+enum CaseStatus {
+  INTAKE
+  EVIDENCE
+  EVALUATION
+  EXCEPTIONS
+  DECISION
+  INTEGRATED
+  REPORTED
+  MONITORING
+  CLOSED
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  READY
+  FAILED
+}
+
+enum ClaimPolarity {
+  SUPPORTIVE
+  RISK
+  NEUTRAL
+}
+
+enum ClaimStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+}
+
+enum ExceptionStatus {
+  PENDING
+  JUSTIFIED
+  REJECTED
+  RESOLVED
+}
+
+enum DecisionType {
+  APPROVE
+  REJECT
+  CONDITIONAL
+  DEFER
+}
+
+enum DecisionClassification {
+  STANDARD
+  EXCEPTION
+  PROVISIONAL_PRECEDENT
+}
+
+enum PrecedentWeight {
+  BINDING
+  PERSUASIVE
+  INFORMATIONAL
+}
+
+enum PortfolioType {
+  FUND
+  BOOK
+  PIPELINE
+}
+
+enum PortfolioStatus {
+  ACTIVE
+  CLOSED
+  FROZEN
+}
+
+enum PortfolioAccessLevel {
+  MAKER
+  CHECKER
+  VIEWER
+}
