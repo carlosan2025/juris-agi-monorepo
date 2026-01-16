@@ -52,3 +52,12 @@ data/
 .env.production
 .env.local
 .env*.local
+.env.check
+.env.prod
+.env.prod2
+.vercel
+
+# Large media files (exceed GitHub 100MB limit)
+media/*.mp4
+*.mp4
+media/

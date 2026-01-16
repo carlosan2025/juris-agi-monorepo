@@ -3,12 +3,16 @@
 import enum
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, Index, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from evidence_repository.models.base import Base, UUIDMixin
+
+if TYPE_CHECKING:
+    from evidence_repository.models.tenant import Tenant
 
 
 class AuditAction(str, enum.Enum):
@@ -68,6 +72,14 @@ class AuditLog(Base, UUIDMixin):
 
     __tablename__ = "audit_logs"
 
+    # MULTI-TENANCY: Tenant binding (REQUIRED)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
     # When
     timestamp: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -97,9 +109,15 @@ class AuditLog(Base, UUIDMixin):
     ip_address: Mapped[str | None] = mapped_column(String(45))  # IPv6 max length
     user_agent: Mapped[str | None] = mapped_column(Text)
 
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship("Tenant")
+
     # Composite indexes for common queries
     __table_args__ = (
         Index("ix_audit_logs_entity", "entity_type", "entity_id"),
         Index("ix_audit_logs_actor_time", "actor_id", "timestamp"),
         Index("ix_audit_logs_action_time", "action", "timestamp"),
+        # MULTI-TENANCY: Indexes for tenant-scoped queries
+        Index("ix_audit_logs_tenant_timestamp", "tenant_id", "timestamp"),
+        Index("ix_audit_logs_tenant_action", "tenant_id", "action"),
     )

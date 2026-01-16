@@ -42,6 +42,7 @@ async def _write_audit_log(
     entity_type: str,
     entity_id: uuid.UUID | None,
     actor_id: str | None,
+    tenant_id: uuid.UUID,
     details: dict | None = None,
     request: Request | None = None,
 ) -> None:
@@ -53,6 +54,7 @@ async def _write_audit_log(
         user_agent = request.headers.get("user-agent")
 
     audit_log = AuditLog(
+        tenant_id=tenant_id,
         action=action,
         entity_type=entity_type,
         entity_id=entity_id,
@@ -132,12 +134,13 @@ async def upload_document(
             detail=f"Invalid profile_code: {profile_code}. Valid options: {', '.join(sorted(valid_profiles))}",
         )
 
-    # Store file and create document/version records
+    # Store file and create document/version records (with tenant isolation)
     ingestion = IngestionService(storage=storage, db=db)
     document, version = await ingestion.ingest_document(
         filename=file.filename,
         content_type=file.content_type or "application/octet-stream",
         data=content,
+        tenant_id=user.tenant_id,
         metadata={"uploaded_by": user.id},
         profile_code=profile_code,
     )
@@ -149,6 +152,7 @@ async def upload_document(
         entity_type="document",
         entity_id=document.id,
         actor_id=user.id,
+        tenant_id=user.tenant_id,
         details={
             "filename": file.filename,
             "content_type": file.content_type,
@@ -195,11 +199,12 @@ async def list_documents(
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_user),
 ) -> PaginatedResponse[DocumentResponse]:
-    """List documents with pagination."""
+    """List documents with pagination (tenant-scoped)."""
     from evidence_repository.models.document import DeletionStatus
 
-    # Build query
+    # Build query with tenant filter
     query = select(Document).options(selectinload(Document.versions))
+    query = query.where(Document.tenant_id == user.tenant_id)
 
     if not include_deleted:
         query = query.where(Document.deleted_at.is_(None))
@@ -214,8 +219,9 @@ async def list_documents(
             else Document.deletion_status == DeletionStatus.ACTIVE
         )
 
-    # Count total
+    # Count total (with tenant filter)
     count_query = select(func.count()).select_from(Document)
+    count_query = count_query.where(Document.tenant_id == user.tenant_id)
     if not include_deleted:
         count_query = count_query.where(Document.deleted_at.is_(None))
         count_query = count_query.where(Document.deletion_status != DeletionStatus.DELETED)
@@ -254,11 +260,11 @@ async def get_document(
     db: AsyncSession = Depends(get_db_session),
     user: User = Depends(get_current_user),
 ) -> DocumentResponse:
-    """Get a document by ID."""
+    """Get a document by ID (tenant-scoped)."""
     result = await db.execute(
         select(Document)
         .options(selectinload(Document.versions))
-        .where(Document.id == document_id)
+        .where(Document.id == document_id, Document.tenant_id == user.tenant_id)
     )
     document = result.scalar_one_or_none()
 

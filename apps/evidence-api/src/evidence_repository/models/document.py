@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from evidence_repository.models.evidence import Span
     from evidence_repository.models.extraction import ExtractionRun
     from evidence_repository.models.project import ProjectDocument
+    from evidence_repository.models.tenant import Tenant
 
 
 class UploadStatus(str, enum.Enum):
@@ -122,6 +123,14 @@ class Document(Base, UUIDMixin, TimestampMixin):
 
     __tablename__ = "documents"
 
+    # MULTI-TENANCY: Tenant binding (REQUIRED)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
     # Core fields
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     content_type: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -176,6 +185,7 @@ class Document(Base, UUIDMixin, TimestampMixin):
     deletion_error: Mapped[str | None] = mapped_column(Text)  # Last error if failed
 
     # Relationships
+    tenant: Mapped["Tenant"] = relationship("Tenant")
     versions: Mapped[list["DocumentVersion"]] = relationship(
         "DocumentVersion",
         back_populates="document",
@@ -188,11 +198,13 @@ class Document(Base, UUIDMixin, TimestampMixin):
         cascade="all, delete-orphan",
     )
 
-    # Indexes
+    # Indexes (including tenant-scoped indexes for efficient queries)
     __table_args__ = (
         Index("ix_documents_filename", "filename"),
         Index("ix_documents_content_type", "content_type"),
         Index("ix_documents_deleted_at", "deleted_at"),
+        Index("ix_documents_tenant_created", "tenant_id", "created_at"),
+        Index("ix_documents_tenant_filename", "tenant_id", "filename"),
     )
 
     @property

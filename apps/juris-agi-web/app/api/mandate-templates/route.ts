@@ -4,13 +4,31 @@ import { auth } from '@/lib/auth';
 import { IndustryProfile, MandateTemplateType, Prisma } from '@prisma/client';
 
 /**
+ * Map short industry names to full enum values
+ * Handles both short names (VC, INSURANCE, PHARMA) and full names (VENTURE_CAPITAL, etc.)
+ */
+function mapIndustryToEnum(industry: string): IndustryProfile | null {
+  const industryMap: Record<string, IndustryProfile> = {
+    // Short names
+    'VC': IndustryProfile.VENTURE_CAPITAL,
+    'INSURANCE': IndustryProfile.INSURANCE,
+    'PHARMA': IndustryProfile.PHARMA,
+    'GENERIC': IndustryProfile.GENERIC,
+    // Full names (already valid)
+    'VENTURE_CAPITAL': IndustryProfile.VENTURE_CAPITAL,
+  };
+
+  return industryMap[industry.toUpperCase()] || null;
+}
+
+/**
  * GET /api/mandate-templates
  * Returns mandate templates filtered by industry and/or company.
  * - System templates (isSystem=true) are available to all authenticated users
  * - Company templates are only visible to users of that company
  *
  * Query params:
- * - industry: Filter by industry profile (VENTURE_CAPITAL, INSURANCE, PHARMA, GENERIC)
+ * - industry: Filter by industry profile (VC, VENTURE_CAPITAL, INSURANCE, PHARMA, GENERIC)
  * - type: Filter by mandate type (PRIMARY, THEMATIC, CARVEOUT)
  * - includeCompany: If true, include company-specific templates (default: true)
  */
@@ -25,9 +43,12 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
-    const industry = searchParams.get('industry') as IndustryProfile | null;
+    const industryParam = searchParams.get('industry');
     const type = searchParams.get('type') as MandateTemplateType | null;
     const includeCompany = searchParams.get('includeCompany') !== 'false';
+
+    // Map industry parameter to enum
+    const industry = industryParam ? mapIndustryToEnum(industryParam) : null;
 
     // Get current user's company
     const currentUser = await prisma.user.findUnique({
@@ -38,9 +59,16 @@ export async function GET(request: Request) {
     // Build query conditions
     const conditions: Prisma.MandateTemplateWhereInput = {};
 
-    // Filter by industry if specified
+    // Filter by industry if specified and valid
     if (industry) {
       conditions.industry = industry;
+    } else if (industryParam) {
+      // If industry was specified but couldn't be mapped, return empty results
+      return NextResponse.json({
+        success: true,
+        templates: [],
+        warning: `Unknown industry: ${industryParam}`,
+      });
     }
 
     // Filter by type if specified

@@ -1,0 +1,958 @@
+// =============================================================================
+// TENANT DATABASE SCHEMA (Template)
+// =============================================================================
+// This schema is used for each tenant's isolated database.
+// Database: juris_tenant_{tenant_slug} (one per company)
+// Each tenant gets a completely separate database with this schema.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/tenant-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("TENANT_DATABASE_URL")
+}
+
+// =============================================================================
+// COMPANY & USERS
+// =============================================================================
+// Note: Only ONE Company record exists per tenant database.
+// The company info is denormalized from the platform database.
+
+model Company {
+  id              String          @id @default(cuid())
+  name            String
+  slug            String          @unique
+  industryProfile IndustryProfile @default(GENERIC)
+  settings        Json            @default("{}")  // CompanySettings JSON
+  logoUrl         String?
+  domain          String?         @unique
+  timezone        String          @default("UTC")
+  currency        String          @default("USD")
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  users           User[]
+  mandates        Mandate[]
+  portfolios      Portfolio[]
+  documents       Document[]
+
+  @@index([slug])
+}
+
+enum IndustryProfile {
+  VENTURE_CAPITAL
+  INSURANCE
+  PHARMA
+  GENERIC
+}
+
+model User {
+  id            String      @id @default(cuid())
+  email         String      @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?     // For credentials auth
+
+  // Company relationship
+  companyId     String?
+  company       Company?    @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  // Role within company
+  companyRole   CompanyRole @default(MEMBER)
+
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  // NextAuth relations
+  accounts      Account[]
+  sessions      Session[]
+
+  // Domain relations
+  mandateMemberships  MandateMember[]
+  createdBaselines    MandateBaselineVersion[] @relation("BaselineCreatedBy")
+  publishedBaselines  MandateBaselineVersion[] @relation("BaselinePublishedBy")
+  uploadedDocuments   Document[]
+  decisions           DecisionRecord[]
+  exceptions          Exception[]
+  portfolioMembers    PortfolioMember[]
+
+  @@index([companyId])
+  @@index([email])
+}
+
+enum CompanyRole {
+  OWNER           // Full control, billing, can delete company
+  ORG_ADMIN       // Manage users, mandates, settings
+  MANDATE_ADMIN   // Manage assigned mandates
+  MEMBER          // Standard access
+  COMPLIANCE      // Compliance-specific access
+  RISK            // Risk committee access
+  FINANCE         // Finance/reporting access
+  IC_MEMBER       // Investment committee member
+  IC_CHAIR        // Investment committee chair
+  VIEWER          // Read-only access
+}
+
+// NextAuth.js Models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model UserInvitation {
+  id          String            @id @default(cuid())
+  email       String
+  name        String?
+  role        CompanyRole       @default(MEMBER)
+  token       String            @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+
+  invitedById String
+  companyId   String
+
+  createdAt   DateTime          @default(now())
+
+  @@index([email])
+  @@index([token])
+}
+
+// =============================================================================
+// MANDATES & CONSTITUTION
+// =============================================================================
+
+model Mandate {
+  id              String        @id @default(cuid())
+  companyId       String
+  company         Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  name            String
+  description     String?
+  status          MandateStatus @default(DRAFT)
+
+  // Active baseline reference (null until first publish)
+  activeBaselineId String?      @unique
+  activeBaseline   MandateBaselineVersion? @relation("ActiveBaseline", fields: [activeBaselineId], references: [id])
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  // Relations
+  members         MandateMember[]
+  baselines       MandateBaselineVersion[] @relation("MandateBaselines")
+  cases           Case[]
+  portfolios      Portfolio[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+  @@index([status])
+}
+
+enum MandateStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+model MandateMember {
+  id          String      @id @default(cuid())
+  mandateId   String
+  mandate     Mandate     @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role        MandateRole @default(MEMBER)
+  addedAt     DateTime    @default(now())
+
+  @@unique([mandateId, userId])
+  @@index([mandateId])
+  @@index([userId])
+}
+
+enum MandateRole {
+  MANDATE_ADMIN
+  MEMBER
+  REVIEWER
+  VIEWER
+}
+
+// =============================================================================
+// BASELINE VERSIONING
+// =============================================================================
+
+model MandateBaselineVersion {
+  id            String          @id @default(cuid())
+  mandateId     String
+  mandate       Mandate         @relation("MandateBaselines", fields: [mandateId], references: [id], onDelete: Cascade)
+
+  version       Int
+  status        BaselineStatus  @default(DRAFT)
+
+  createdById   String
+  createdBy     User            @relation("BaselineCreatedBy", fields: [createdById], references: [id])
+  publishedById String?
+  publishedBy   User?           @relation("BaselinePublishedBy", fields: [publishedById], references: [id])
+
+  createdAt     DateTime        @default(now())
+  publishedAt   DateTime?
+  archivedAt    DateTime?
+
+  changeSummary String?
+
+  // Relations
+  modules       MandateBaselineModule[]
+  activeMandate Mandate?        @relation("ActiveBaseline")
+  cases         Case[]
+
+  @@unique([mandateId, version])
+  @@index([mandateId])
+  @@index([status])
+}
+
+enum BaselineStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+model MandateBaselineModule {
+  id              String                  @id @default(cuid())
+  baselineId      String
+  baseline        MandateBaselineVersion  @relation(fields: [baselineId], references: [id], onDelete: Cascade)
+
+  moduleType      BaselineModuleType
+  schemaVersion   String                  @default("1.0")
+  payload         Json
+
+  isValid         Boolean                 @default(false)
+  validationErrors Json?
+
+  updatedAt       DateTime                @updatedAt
+
+  @@unique([baselineId, moduleType])
+  @@index([baselineId])
+}
+
+enum BaselineModuleType {
+  MANDATE
+  EXCLUSIONS
+  RISK_APPETITE
+  GOVERNANCE_THRESHOLDS
+  REPORTING_OBLIGATIONS
+}
+
+// =============================================================================
+// CASES & DECISION ENVELOPE
+// =============================================================================
+
+model Case {
+  id              String      @id @default(cuid())
+  mandateId       String
+  mandate         Mandate     @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+
+  baselineId      String
+  baseline        MandateBaselineVersion @relation(fields: [baselineId], references: [id])
+
+  name            String
+  description     String?
+  caseType        CaseType    @default(DEAL)
+  status          CaseStatus  @default(INTAKE)
+  currentStep     Int         @default(3)
+
+  targetName      String?
+  targetSector    String?
+  targetMetadata  Json?
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  documents       Document[]
+  claims          Claim[]
+  exceptions      Exception[]
+  decision        DecisionRecord?
+
+  @@index([mandateId])
+  @@index([status])
+  @@index([baselineId])
+}
+
+enum CaseType {
+  DEAL
+  UNDERWRITING
+  ASSESSMENT
+}
+
+enum CaseStatus {
+  INTAKE
+  EVIDENCE
+  EVALUATION
+  EXCEPTIONS
+  DECISION
+  INTEGRATED
+  REPORTED
+  MONITORING
+  CLOSED
+}
+
+// =============================================================================
+// DOCUMENTS & EVIDENCE
+// =============================================================================
+
+model Document {
+  id              String          @id @default(cuid())
+  companyId       String
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  caseId          String?
+  case            Case?           @relation(fields: [caseId], references: [id], onDelete: SetNull)
+
+  filename        String
+  originalName    String
+  mimeType        String
+  fileSize        Int
+  storageKey      String
+
+  documentType    String          @default("other")
+  status          DocumentStatus  @default(UPLOADED)
+
+  pageCount       Int?
+  extractedText   String?         @db.Text
+  metadata        Json?
+
+  uploadedById    String
+  uploadedBy      User            @relation(fields: [uploadedById], references: [id])
+  uploadedAt      DateTime        @default(now())
+  processedAt     DateTime?
+
+  // Relations
+  claims          Claim[]
+
+  @@index([companyId])
+  @@index([caseId])
+  @@index([status])
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  READY
+  FAILED
+}
+
+// =============================================================================
+// CLAIMS & EVALUATION
+// =============================================================================
+
+model Claim {
+  id              String        @id @default(cuid())
+  caseId          String
+  case            Case          @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  documentId      String
+  document        Document      @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  claimType       String
+  field           String
+  value           Json
+  unit            String?
+  confidence      Float         @default(0)
+  polarity        ClaimPolarity @default(NEUTRAL)
+  status          ClaimStatus   @default(PROPOSED)
+
+  pageNumber      Int?
+  section         String?
+  quote           String?       @db.Text
+
+  approvedById    String?
+  notes           String?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([caseId])
+  @@index([documentId])
+  @@index([status])
+}
+
+enum ClaimPolarity {
+  SUPPORTIVE
+  RISK
+  NEUTRAL
+}
+
+enum ClaimStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+}
+
+// =============================================================================
+// EXCEPTIONS
+// =============================================================================
+
+model Exception {
+  id              String          @id @default(cuid())
+  caseId          String
+  case            Case            @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  ruleId          String
+  ruleName        String
+  status          ExceptionStatus @default(PENDING)
+
+  justification   String?         @db.Text
+  justifiedById   String?
+  justifiedBy     User?           @relation(fields: [justifiedById], references: [id])
+  scope           String?
+  conditions      String?         @db.Text
+
+  signedOffAt     DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([caseId])
+  @@index([status])
+}
+
+enum ExceptionStatus {
+  PENDING
+  JUSTIFIED
+  REJECTED
+  RESOLVED
+}
+
+// =============================================================================
+// DECISIONS
+// =============================================================================
+
+model DecisionRecord {
+  id              String                  @id @default(cuid())
+  caseId          String                  @unique
+  case            Case                    @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  decision        DecisionType
+  classification  DecisionClassification  @default(STANDARD)
+  rationale       String                  @db.Text
+  conditions      String?                 @db.Text
+
+  createPrecedent Boolean                 @default(false)
+  precedentLabel  String?
+  precedentWeight PrecedentWeight?
+
+  decidedById     String
+  decidedBy       User                    @relation(fields: [decidedById], references: [id])
+  decidedAt       DateTime                @default(now())
+
+  auditTrail      Json                    @default("[]")
+
+  @@index([caseId])
+  @@index([decision])
+}
+
+enum DecisionType {
+  APPROVE
+  REJECT
+  CONDITIONAL
+  DEFER
+}
+
+enum DecisionClassification {
+  STANDARD
+  EXCEPTION
+  PROVISIONAL_PRECEDENT
+}
+
+enum PrecedentWeight {
+  BINDING
+  PERSUASIVE
+  INFORMATIONAL
+}
+
+// =============================================================================
+// PORTFOLIOS
+// =============================================================================
+
+model Portfolio {
+  id              String          @id @default(cuid())
+  companyId       String
+  company         Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  mandateId       String?
+  mandate         Mandate?        @relation(fields: [mandateId], references: [id], onDelete: SetNull)
+
+  name            String
+  code            String?
+  description     String?
+  portfolioType   PortfolioType   @default(FUND)
+  status          PortfolioStatus @default(DRAFT)
+
+  // Financial
+  baseCurrency    String          @default("USD")
+  aumCurrent      Decimal?        @db.Decimal(18, 2)
+  aumTarget       Decimal?        @db.Decimal(18, 2)
+
+  // Configuration
+  timezone        String          @default("UTC")
+  jurisdiction    String?
+  startDate       DateTime?
+  endDate         DateTime?
+  tags            Json            @default("[]")
+
+  // Computed metrics
+  constraints     Json            @default("{}")
+  composition     Json            @default("{}")
+  metrics         Json            @default("{}")
+
+  createdAt       DateTime        @default(now())
+  createdById     String?
+  updatedAt       DateTime        @updatedAt
+
+  // Team members
+  members         PortfolioMember[]
+
+  @@index([companyId])
+  @@index([mandateId])
+  @@index([status])
+}
+
+enum PortfolioType {
+  FUND
+  BOOK
+  PIPELINE
+}
+
+enum PortfolioStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  CLOSED
+  ARCHIVED
+}
+
+model PortfolioMember {
+  id            String              @id @default(cuid())
+  portfolioId   String
+  portfolio     Portfolio           @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  accessLevel   PortfolioAccessLevel @default(VIEWER)
+  addedAt       DateTime            @default(now())
+
+  @@unique([portfolioId, userId])
+  @@index([portfolioId])
+  @@index([userId])
+}
+
+enum PortfolioAccessLevel {
+  MAKER
+  CHECKER
+  VIEWER
+}
+
+// =============================================================================
+// INFRASTRUCTURE CONFIGURATION
+// =============================================================================
+// Tracks whether tenant uses shared (platform) or dedicated infrastructure
+
+model InfrastructureConfig {
+  id              String              @id @default(cuid())
+
+  // Overall infrastructure mode
+  mode            InfrastructureMode  @default(MULTI_TENANT)
+
+  // Per-service status
+  databaseMode    ServiceMode         @default(SHARED)
+  storageMode     ServiceMode         @default(SHARED)
+  vectorDbMode    ServiceMode         @default(SHARED)
+  aiMode          ServiceMode         @default(PLATFORM)
+  emailMode       ServiceMode         @default(PLATFORM)
+
+  // Migration tracking
+  migrationInProgress Boolean         @default(false)
+  migrationStep       String?
+  migrationStartedAt  DateTime?
+  migrationLog        Json            @default("[]")
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+}
+
+enum InfrastructureMode {
+  MULTI_TENANT    // Uses Juris AGI shared infrastructure
+  HYBRID          // Mix of shared and dedicated
+  DEDICATED       // All tenant-owned infrastructure
+}
+
+enum ServiceMode {
+  SHARED          // Uses platform's shared infrastructure
+  PLATFORM        // Uses platform's default API keys
+  DEDICATED       // Uses tenant's own infrastructure/keys
+}
+
+// =============================================================================
+// TENANT INTEGRATIONS (General Services)
+// =============================================================================
+// These allow tenants to optionally provide their own API keys
+// instead of using platform-level keys.
+
+model TenantAIConfig {
+  id              String        @id @default(cuid())
+  provider        TenantAIProvider
+
+  apiKeyEncrypted String
+  organizationId  String?
+  defaultModel    String?
+
+  isActive        Boolean       @default(true)
+  isPrimary       Boolean       @default(false)
+  lastTestedAt    DateTime?
+  testStatus      ServiceTestStatus @default(UNTESTED)
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum TenantAIProvider {
+  OPENAI
+  ANTHROPIC
+  AZURE_OPENAI
+}
+
+model TenantStorageConfig {
+  id              String              @id @default(cuid())
+  provider        TenantStorageProvider
+
+  bucket          String
+  region          String
+  accessKeyEncrypted  String?
+  secretKeyEncrypted  String?
+  endpoint        String?
+
+  maxFileSizeMb   Int                 @default(100)
+
+  isActive        Boolean             @default(true)
+  isPrimary       Boolean             @default(false)
+  lastTestedAt    DateTime?
+  testStatus      ServiceTestStatus   @default(UNTESTED)
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum TenantStorageProvider {
+  AWS_S3
+  CLOUDFLARE_R2
+  GCS
+  AZURE_BLOB
+  MINIO
+}
+
+model TenantEmailConfig {
+  id              String            @id @default(cuid())
+  provider        TenantEmailProvider @default(SMTP)
+
+  // SMTP settings
+  host            String?
+  port            Int?
+  username        String?
+  passwordEncrypted String?
+  secure          Boolean           @default(true)
+
+  // API-based providers
+  apiKeyEncrypted String?
+  domain          String?
+
+  fromEmail       String
+  fromName        String
+  replyToEmail    String?
+
+  isActive        Boolean           @default(true)
+  isPrimary       Boolean           @default(false)
+  lastTestedAt    DateTime?
+  testStatus      ServiceTestStatus @default(UNTESTED)
+
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@unique([provider, isPrimary])
+}
+
+enum TenantEmailProvider {
+  SMTP
+  SENDGRID
+  SES
+  MAILGUN
+  POSTMARK
+}
+
+// =============================================================================
+// EVIDENCE SERVICES (Tenant's Document Infrastructure)
+// =============================================================================
+// These services handle the tenant's sensitive documents.
+// NO PLATFORM FALLBACK - tenant must configure or use shared infrastructure.
+
+model EvidenceAIConfig {
+  id                String              @id @default(cuid())
+  provider          EvidenceAIProvider
+
+  apiKeyEncrypted   String
+  organizationId    String?
+
+  // Model settings
+  embeddingModel    String              @default("text-embedding-3-large")
+  chatModel         String?             @default("gpt-4-turbo")
+  dimensions        Int                 @default(3072)
+
+  // Rate limits
+  maxTokensPerRequest Int               @default(8192)
+  rateLimitPerMinute  Int               @default(100)
+  tokensPerMonth      Int?              // Budget limit
+
+  isActive          Boolean             @default(true)
+  isPrimary         Boolean             @default(false)
+  lastTestedAt      DateTime?
+  testStatus        ServiceTestStatus   @default(UNTESTED)
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceAIProvider {
+  OPENAI
+  ANTHROPIC
+  COHERE
+  VOYAGE
+}
+
+model EvidenceDocumentConfig {
+  id                String                  @id @default(cuid())
+  provider          EvidenceDocumentProvider
+
+  // API credentials
+  publicKeyEncrypted  String?
+  secretKeyEncrypted  String?
+  apiKeyEncrypted     String?
+
+  // Processing settings
+  ocrEnabled        Boolean               @default(true)
+  ocrLanguages      Json                  @default("[\"en\"]")
+  maxFileSizeMb     Int                   @default(50)
+  supportedFormats  Json                  @default("[\"pdf\", \"docx\", \"doc\", \"txt\"]")
+
+  // Extraction settings
+  extractImages     Boolean               @default(true)
+  extractTables     Boolean               @default(true)
+
+  isActive          Boolean               @default(true)
+  isPrimary         Boolean               @default(false)
+  lastTestedAt      DateTime?
+  testStatus        ServiceTestStatus     @default(UNTESTED)
+
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceDocumentProvider {
+  ILOVEPDF
+  ADOBE_PDF
+  DOCPARSER
+  INTERNAL_TESSERACT
+}
+
+model EvidenceStorageConfig {
+  id                String              @id @default(cuid())
+  provider          EvidenceStorageProvider
+
+  // Connection details
+  bucket            String
+  region            String
+  endpoint          String?             // For S3-compatible
+  accessKeyEncrypted  String?
+  secretKeyEncrypted  String?
+  accountId         String?             // For Cloudflare
+
+  // CDN settings
+  cdnEnabled        Boolean             @default(false)
+  cdnDomain         String?
+  signedUrlExpiry   Int                 @default(3600)  // seconds
+
+  // Limits
+  maxFileSizeMb     Int                 @default(100)
+  quotaGb           Int?
+  storageUsedGb     Float               @default(0)
+
+  isActive          Boolean             @default(true)
+  isPrimary         Boolean             @default(false)
+  lastTestedAt      DateTime?
+  testStatus        ServiceTestStatus   @default(UNTESTED)
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceStorageProvider {
+  CLOUDFLARE_R2
+  AWS_S3
+  GCS
+  AZURE_BLOB
+  MINIO
+}
+
+model EvidenceVectorConfig {
+  id                String              @id @default(cuid())
+  provider          EvidenceVectorProvider
+
+  // Connection details
+  apiKeyEncrypted   String?
+  host              String?             // For self-hosted
+  environment       String?             // For Pinecone
+
+  // Index settings
+  indexName         String
+  namespace         String?
+  dimensions        Int                 @default(3072)
+  metric            VectorMetric        @default(COSINE)
+
+  // Performance
+  replicaCount      Int                 @default(1)
+  podType           String?             // For Pinecone
+
+  isActive          Boolean             @default(true)
+  isPrimary         Boolean             @default(false)
+  lastTestedAt      DateTime?
+  testStatus        ServiceTestStatus   @default(UNTESTED)
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceVectorProvider {
+  PINECONE
+  WEAVIATE
+  QDRANT
+  PGVECTOR
+  CHROMA
+}
+
+enum VectorMetric {
+  COSINE
+  EUCLIDEAN
+  DOTPRODUCT
+}
+
+model EvidenceDatabaseConfig {
+  id                String              @id @default(cuid())
+  provider          EvidenceDatabaseProvider
+
+  // Connection details
+  host              String
+  port              Int                 @default(5432)
+  databaseName      String
+  usernameEncrypted String
+  passwordEncrypted String
+
+  // SSL
+  sslMode           SSLMode             @default(REQUIRE)
+  sslCertEncrypted  String?
+
+  // Pool settings
+  poolMin           Int                 @default(2)
+  poolMax           Int                 @default(20)
+  idleTimeout       Int                 @default(10000)  // ms
+
+  // Status
+  isActive          Boolean             @default(true)
+  isPrimary         Boolean             @default(false)
+  lastHealthCheck   DateTime?
+  healthStatus      HealthStatus        @default(UNKNOWN)
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceDatabaseProvider {
+  POSTGRESQL
+  NEON
+  SUPABASE
+  AWS_RDS
+  CLOUD_SQL
+}
+
+enum SSLMode {
+  DISABLE
+  REQUIRE
+  VERIFY_CA
+  VERIFY_FULL
+}
+
+enum HealthStatus {
+  HEALTHY
+  DEGRADED
+  UNHEALTHY
+  UNKNOWN
+}
+
+enum ServiceTestStatus {
+  SUCCESS
+  FAILED
+  UNTESTED
+}

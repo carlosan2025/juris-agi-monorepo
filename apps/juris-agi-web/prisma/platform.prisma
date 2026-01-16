@@ -1,0 +1,744 @@
+// =============================================================================
+// PLATFORM DATABASE SCHEMA
+// =============================================================================
+// This schema manages the Juris AGI platform itself - NOT client/tenant data.
+// Database: juris_platform (single, centralized)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/platform-client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("PLATFORM_DATABASE_URL")
+}
+
+// =============================================================================
+// ADMINISTRATION
+// =============================================================================
+
+model JurisAdmin {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  passwordHash  String?   // Null until first login password set
+  role          AdminRole @default(ADMIN)
+  isActive      Boolean   @default(true)
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+
+  // Relations
+  sessions      AdminSession[]
+  auditLogs     AuditLog[]
+
+  @@index([email])
+  @@index([role])
+}
+
+enum AdminRole {
+  SUPER_ADMIN   // Full platform control
+  ADMIN         // Manage tenants, users, settings
+  SUPPORT       // Read-only access, can assist tenants
+}
+
+model AdminSession {
+  id          String      @id @default(cuid())
+  adminId     String
+  admin       JurisAdmin  @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  token       String      @unique
+  expiresAt   DateTime
+  ipAddress   String?
+  userAgent   String?
+
+  createdAt   DateTime    @default(now())
+
+  @@index([adminId])
+  @@index([token])
+  @@index([expiresAt])
+}
+
+model AuditLog {
+  id          String      @id @default(cuid())
+  adminId     String?
+  admin       JurisAdmin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  action      String      // e.g., "tenant.create", "admin.login", "settings.update"
+  entityType  String?     // e.g., "Tenant", "JurisAdmin"
+  entityId    String?
+  details     Json?       // Additional action-specific data
+  ipAddress   String?
+
+  createdAt   DateTime    @default(now())
+
+  @@index([adminId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model SystemSettings {
+  id          String    @id @default(cuid())
+  key         String    @unique
+  value       Json
+  description String?
+  updatedAt   DateTime  @updatedAt
+  updatedBy   String?   // Admin ID who last updated
+
+  @@index([key])
+}
+
+// =============================================================================
+// TENANT MANAGEMENT
+// =============================================================================
+
+model Tenant {
+  id              String          @id @default(cuid())
+  name            String
+  slug            String          @unique
+  domain          String?         @unique
+  logoUrl         String?
+  industryProfile TenantIndustry  @default(GENERIC)
+
+  // Status
+  status          TenantStatus    @default(PENDING)
+  onboardedAt     DateTime?
+
+  // Billing contact
+  billingEmail    String
+  billingName     String?
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  // Relations
+  subscription    TenantSubscription?
+  databaseConfig  TenantDatabaseConfig?
+  usageMetrics    TenantUsageMetric[]
+  apiKeys         TenantAPIKey[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([industryProfile])
+}
+
+enum TenantIndustry {
+  VENTURE_CAPITAL
+  INSURANCE
+  PHARMA
+  GENERIC
+}
+
+enum TenantStatus {
+  PENDING           // Awaiting subscription
+  PROVISIONING      // Database being set up
+  ACTIVE            // Fully operational
+  SUSPENDED         // Payment issues or violations
+  ARCHIVED          // Soft deleted, data retained
+}
+
+model TenantSubscription {
+  id              String              @id @default(cuid())
+  tenantId        String              @unique
+  tenant          Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  plan            SubscriptionPlan    @default(TRIAL)
+  status          SubscriptionStatus  @default(TRIALING)
+
+  // Stripe integration
+  stripeCustomerId      String?       @unique
+  stripeSubscriptionId  String?       @unique
+  stripePriceId         String?
+
+  // Billing cycle
+  currentPeriodStart    DateTime?
+  currentPeriodEnd      DateTime?
+  cancelAtPeriodEnd     Boolean       @default(false)
+
+  // Limits based on plan
+  maxUsers              Int           @default(5)
+  maxMandates           Int           @default(3)
+  maxCasesPerMonth      Int           @default(100)
+  maxStorageGb          Int           @default(10)
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([stripeCustomerId])
+  @@index([status])
+}
+
+enum SubscriptionPlan {
+  TRIAL
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+  CUSTOM
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  PAUSED
+}
+
+model TenantDatabaseConfig {
+  id              String    @id @default(cuid())
+  tenantId        String    @unique
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // Connection details (encrypted)
+  databaseName    String    // e.g., "juris_tenant_acme_capital"
+  host            String
+  port            Int       @default(5432)
+  username        String
+  passwordEncrypted String  // Encrypted with platform key
+
+  // Metadata
+  region          String    @default("us-east-1")
+  poolSize        Int       @default(10)
+
+  // Status
+  status          DatabaseStatus @default(PROVISIONING)
+  provisionedAt   DateTime?
+  lastHealthCheck DateTime?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status])
+  @@index([region])
+}
+
+enum DatabaseStatus {
+  PROVISIONING
+  READY
+  MIGRATING
+  ERROR
+  SUSPENDED
+}
+
+model TenantUsageMetric {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  period          DateTime  // Start of billing period (monthly)
+
+  // Usage counts
+  activeUsers     Int       @default(0)
+  apiCalls        Int       @default(0)
+  aiTokensUsed    Int       @default(0)
+  documentsProcessed Int    @default(0)
+  storageUsedMb   Int       @default(0)
+  casesCreated    Int       @default(0)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([tenantId, period])
+  @@index([tenantId])
+  @@index([period])
+}
+
+model TenantAPIKey {
+  id              String    @id @default(cuid())
+  tenantId        String
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name            String
+  keyHash         String    @unique  // Hashed API key
+  keyPrefix       String              // First 8 chars for identification
+
+  permissions     Json      @default("[]")  // Array of permission strings
+  expiresAt       DateTime?
+  lastUsedAt      DateTime?
+
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+
+  @@index([tenantId])
+  @@index([keyHash])
+}
+
+// =============================================================================
+// PLATFORM SERVICES
+// =============================================================================
+
+model EmailTemplate {
+  id          String    @id @default(cuid())
+  slug        String    @unique  // e.g., "welcome", "password-reset"
+  name        String
+  subject     String
+  htmlBody    String    @db.Text
+  textBody    String?   @db.Text
+  variables   Json      @default("[]")  // Expected variable names
+
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([slug])
+}
+
+model EmailLog {
+  id          String      @id @default(cuid())
+  templateId  String?
+
+  toEmail     String
+  toName      String?
+  fromEmail   String
+  fromName    String?
+  subject     String
+
+  // Status tracking
+  status      EmailStatus @default(QUEUED)
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  failedAt    DateTime?
+  errorMessage String?
+
+  // Context
+  tenantId    String?
+  relatedType String?     // e.g., "UserInvitation", "PasswordReset"
+  relatedId   String?
+
+  // Provider info
+  providerMessageId String?
+
+  createdAt   DateTime    @default(now())
+
+  @@index([toEmail])
+  @@index([status])
+  @@index([tenantId])
+  @@index([createdAt])
+}
+
+enum EmailStatus {
+  QUEUED
+  SENDING
+  SENT
+  DELIVERED
+  FAILED
+  BOUNCED
+}
+
+model WebhookEndpoint {
+  id          String          @id @default(cuid())
+  url         String
+  description String?
+  events      Json            @default("[]")  // Array of event types
+  secret      String          // For signature verification
+
+  isActive    Boolean         @default(true)
+  lastTriggeredAt DateTime?
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  deliveries  WebhookDelivery[]
+
+  @@index([isActive])
+}
+
+model WebhookDelivery {
+  id          String          @id @default(cuid())
+  endpointId  String
+  endpoint    WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  event       String
+  payload     Json
+
+  status      WebhookStatus   @default(PENDING)
+  attempts    Int             @default(0)
+  lastAttemptAt DateTime?
+  responseCode Int?
+  responseBody String?        @db.Text
+  errorMessage String?
+
+  createdAt   DateTime        @default(now())
+
+  @@index([endpointId])
+  @@index([status])
+  @@index([event])
+}
+
+enum WebhookStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  RETRYING
+}
+
+// =============================================================================
+// PLATFORM-LEVEL INTEGRATIONS (Juris AGI's own API keys)
+// =============================================================================
+
+model AIProviderConfig {
+  id          String        @id @default(cuid())
+  provider    AIProvider
+
+  apiKeyEncrypted String    // Encrypted API key
+  organizationId  String?
+
+  // Settings
+  defaultModel    String?
+  maxTokensPerRequest Int   @default(4096)
+  rateLimitPerMinute  Int   @default(60)
+
+  isActive    Boolean       @default(true)
+  isPrimary   Boolean       @default(false)  // Default provider
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum AIProvider {
+  OPENAI
+  ANTHROPIC
+  AZURE_OPENAI
+  GOOGLE
+}
+
+model StorageProviderConfig {
+  id          String          @id @default(cuid())
+  provider    StorageProvider
+
+  // AWS S3 / Compatible
+  bucket      String
+  region      String
+  accessKeyEncrypted  String?
+  secretKeyEncrypted  String?
+  endpoint    String?         // For S3-compatible providers
+
+  // Settings
+  maxFileSizeMb Int           @default(100)
+  allowedMimeTypes Json       @default("[]")
+
+  isActive    Boolean         @default(true)
+  isPrimary   Boolean         @default(false)
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum StorageProvider {
+  AWS_S3
+  GCS
+  AZURE_BLOB
+  MINIO
+  R2
+}
+
+model EmailProviderConfig {
+  id          String          @id @default(cuid())
+  provider    EmailProvider
+
+  // SMTP settings
+  host        String?
+  port        Int?
+  username    String?
+  passwordEncrypted String?
+  secure      Boolean         @default(true)
+
+  // API-based providers
+  apiKeyEncrypted String?
+  domain      String?
+
+  // From settings
+  fromEmail   String
+  fromName    String          @default("Juris AGI")
+  replyToEmail String?
+
+  isActive    Boolean         @default(true)
+  isPrimary   Boolean         @default(false)
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EmailProvider {
+  SMTP
+  SENDGRID
+  SES
+  MAILGUN
+  POSTMARK
+}
+
+// =============================================================================
+// SHARED EVIDENCE INFRASTRUCTURE (Multi-Tenant Default)
+// =============================================================================
+// These services power the Evidence App for tenants using shared infrastructure.
+// Tenants start here and can migrate to their own dedicated infrastructure.
+// Managed from /administration/evidence in the Juris Admin panel.
+//
+// DATA ISOLATION: Even on shared infrastructure, tenant data is isolated via:
+// - Row-level security (tenant_id on all records)
+// - Storage prefixes (s3://bucket/tenant_{id}/...)
+// - Vector namespaces (index/tenant_{id})
+// - Encryption at rest with tenant-specific keys
+
+model EvidenceAIConfig {
+  id                String              @id @default(cuid())
+  provider          EvidenceAIProvider
+
+  apiKeyEncrypted   String
+  organizationId    String?
+
+  // Model settings
+  embeddingModel    String              @default("text-embedding-3-large")
+  chatModel         String?             @default("gpt-4-turbo")
+  dimensions        Int                 @default(3072)
+
+  // Rate limits
+  maxTokensPerRequest Int               @default(8192)
+  rateLimitPerMinute  Int               @default(100)
+  tokensPerMonth      Int?              // Optional budget limit
+
+  isActive          Boolean             @default(true)
+  isPrimary         Boolean             @default(false)
+  lastTestedAt      DateTime?
+  testStatus        ServiceTestStatus   @default(UNTESTED)
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceAIProvider {
+  OPENAI
+  ANTHROPIC
+  COHERE
+  VOYAGE
+}
+
+model EvidenceDocumentConfig {
+  id                String                  @id @default(cuid())
+  provider          EvidenceDocumentProvider
+
+  // API credentials
+  publicKeyEncrypted  String?
+  secretKeyEncrypted  String?
+  apiKeyEncrypted     String?
+
+  // Processing settings
+  ocrEnabled        Boolean               @default(true)
+  ocrLanguages      Json                  @default("[\"en\"]")
+  maxFileSizeMb     Int                   @default(50)
+  supportedFormats  Json                  @default("[\"pdf\", \"docx\", \"doc\", \"txt\"]")
+
+  // Extraction settings
+  extractImages     Boolean               @default(true)
+  extractTables     Boolean               @default(true)
+
+  isActive          Boolean               @default(true)
+  isPrimary         Boolean               @default(false)
+  lastTestedAt      DateTime?
+  testStatus        ServiceTestStatus     @default(UNTESTED)
+
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceDocumentProvider {
+  ILOVEPDF
+  ADOBE_PDF
+  DOCPARSER
+  INTERNAL_TESSERACT
+}
+
+model EvidenceStorageConfig {
+  id                String              @id @default(cuid())
+  provider          EvidenceStorageProvider
+
+  // Connection details
+  bucket            String
+  region            String
+  endpoint          String?             // For S3-compatible
+  accessKeyEncrypted  String?
+  secretKeyEncrypted  String?
+  accountId         String?             // For Cloudflare
+
+  // CDN settings
+  cdnEnabled        Boolean             @default(false)
+  cdnDomain         String?
+  signedUrlExpiry   Int                 @default(3600)  // seconds
+
+  // Limits
+  maxFileSizeMb     Int                 @default(100)
+  quotaGb           Int?
+  storageUsedGb     Float               @default(0)
+
+  isActive          Boolean             @default(true)
+  isPrimary         Boolean             @default(false)
+  lastTestedAt      DateTime?
+  testStatus        ServiceTestStatus   @default(UNTESTED)
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceStorageProvider {
+  CLOUDFLARE_R2
+  AWS_S3
+  GCS
+  AZURE_BLOB
+  MINIO
+}
+
+model EvidenceVectorConfig {
+  id                String              @id @default(cuid())
+  provider          EvidenceVectorProvider
+
+  // Connection details
+  apiKeyEncrypted   String?
+  host              String?             // For self-hosted
+  environment       String?             // For Pinecone
+
+  // Index settings
+  indexName         String
+  namespace         String?
+  dimensions        Int                 @default(3072)
+  metric            VectorMetric        @default(COSINE)
+
+  // Performance
+  replicaCount      Int                 @default(1)
+  podType           String?             // For Pinecone: p1, s1, etc.
+
+  isActive          Boolean             @default(true)
+  isPrimary         Boolean             @default(false)
+  lastTestedAt      DateTime?
+  testStatus        ServiceTestStatus   @default(UNTESTED)
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceVectorProvider {
+  PINECONE
+  WEAVIATE
+  QDRANT
+  PGVECTOR
+  CHROMA
+}
+
+enum VectorMetric {
+  COSINE
+  EUCLIDEAN
+  DOTPRODUCT
+}
+
+model EvidenceDatabaseConfig {
+  id                String              @id @default(cuid())
+  provider          EvidenceDatabaseProvider
+
+  // Connection details
+  host              String
+  port              Int                 @default(5432)
+  databaseName      String
+  usernameEncrypted String
+  passwordEncrypted String
+
+  // SSL
+  sslMode           SSLMode             @default(REQUIRE)
+  sslCertEncrypted  String?
+
+  // Pool settings
+  poolMin           Int                 @default(2)
+  poolMax           Int                 @default(20)
+  idleTimeout       Int                 @default(10000)  // ms
+
+  // Status
+  isActive          Boolean             @default(true)
+  isPrimary         Boolean             @default(false)
+  lastHealthCheck   DateTime?
+  healthStatus      HealthStatus        @default(UNKNOWN)
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  @@unique([provider, isPrimary])
+  @@index([provider])
+}
+
+enum EvidenceDatabaseProvider {
+  POSTGRESQL
+  NEON
+  SUPABASE
+  AWS_RDS
+  CLOUD_SQL
+}
+
+enum SSLMode {
+  DISABLE
+  REQUIRE
+  VERIFY_CA
+  VERIFY_FULL
+}
+
+enum HealthStatus {
+  HEALTHY
+  DEGRADED
+  UNHEALTHY
+  UNKNOWN
+}
+
+enum ServiceTestStatus {
+  SUCCESS
+  FAILED
+  UNTESTED
+}
+
+// =============================================================================
+// BILLING CONFIGURATION (Platform-Only)
+// =============================================================================
+
+model BillingConfig {
+  id                    String    @id @default(cuid())
+
+  // Stripe keys
+  stripeSecretKeyEncrypted    String
+  stripePublishableKey        String
+  stripeWebhookSecretEncrypted String?
+
+  // Settings
+  currency              String    @default("USD")
+  trialDays             Int       @default(14)
+  taxRatePercent        Float?
+
+  // Webhooks
+  webhookEndpoint       String?
+
+  isActive              Boolean   @default(true)
+  lastTestedAt          DateTime?
+  testStatus            ServiceTestStatus @default(UNTESTED)
+
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}

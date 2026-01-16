@@ -2,8 +2,8 @@
 
 import { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import type {
-  Project,
-  ProjectConstitution,
+  Mandate,
+  MandateConstitution,
   EvidenceAdmissibilitySchema,
   Case,
   WorkflowStep,
@@ -12,8 +12,8 @@ import type {
 import { generateWorkflowSteps } from '@/components/workflow/WorkflowRail';
 
 interface ActiveContextState {
-  project: Project | null;
-  constitution: ProjectConstitution | null;
+  mandate: Mandate | null;
+  constitution: MandateConstitution | null;
   schema: EvidenceAdmissibilitySchema | null;
   activeCase: Case | null;
   currentStep: WorkflowStep;
@@ -21,8 +21,8 @@ interface ActiveContextState {
 }
 
 interface ActiveContextActions {
-  setProject: (project: Project | null) => void;
-  setConstitution: (constitution: ProjectConstitution | null) => void;
+  setMandate: (mandate: Mandate | null) => void;
+  setConstitution: (constitution: MandateConstitution | null) => void;
   setSchema: (schema: EvidenceAdmissibilitySchema | null) => void;
   setActiveCase: (activeCase: Case | null) => void;
   setCurrentStep: (step: WorkflowStep) => void;
@@ -35,7 +35,7 @@ type ActiveContextType = ActiveContextState & ActiveContextActions;
 const ActiveContext = createContext<ActiveContextType | undefined>(undefined);
 
 const initialState: ActiveContextState = {
-  project: null,
+  mandate: null,
   constitution: null,
   schema: null,
   activeCase: null,
@@ -46,11 +46,11 @@ const initialState: ActiveContextState = {
 export function ActiveContextProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<ActiveContextState>(initialState);
 
-  const setProject = useCallback((project: Project | null) => {
-    setState((prev) => ({ ...prev, project }));
+  const setMandate = useCallback((mandate: Mandate | null) => {
+    setState((prev) => ({ ...prev, mandate }));
   }, []);
 
-  const setConstitution = useCallback((constitution: ProjectConstitution | null) => {
+  const setConstitution = useCallback((constitution: MandateConstitution | null) => {
     setState((prev) => ({ ...prev, constitution }));
   }, []);
 
@@ -66,7 +66,7 @@ export function ActiveContextProvider({ children }: { children: ReactNode }) {
       currentStep: activeCase ? 4 : prev.currentStep,
       workflowSteps: activeCase
         ? generateWorkflowSteps(4, {
-            1: { version: prev.project?.activeBaselineVersion ?? undefined },
+            1: { version: prev.mandate?.activeBaselineVersion ?? undefined },
             2: { version: prev.constitution?.version },
             3: { version: prev.schema?.version },
           })
@@ -99,7 +99,7 @@ export function ActiveContextProvider({ children }: { children: ReactNode }) {
 
   const value: ActiveContextType = {
     ...state,
-    setProject,
+    setMandate,
     setConstitution,
     setSchema,
     setActiveCase,

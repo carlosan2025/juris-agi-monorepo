@@ -13,6 +13,7 @@ from evidence_repository.api.routes.ingest import router as ingest_router
 from evidence_repository.api.routes.jobs import router as jobs_router
 from evidence_repository.api.routes.projects import router as projects_router
 from evidence_repository.api.routes.search import router as search_router
+from evidence_repository.api.routes.tenants import router as tenants_router
 from evidence_repository.api.routes.worker import router as worker_router
 
 # Main API router
@@ -29,6 +30,7 @@ router.include_router(extraction_router, tags=["Extraction"])
 router.include_router(jobs_router, prefix="/jobs", tags=["Jobs"])
 router.include_router(ingest_router, prefix="/ingest", tags=["Bulk Ingestion"])
 router.include_router(admin_router, prefix="/admin", tags=["Admin"])
+router.include_router(tenants_router, prefix="/tenants", tags=["Tenants"])
 router.include_router(worker_router, prefix="/worker", tags=["Worker"])
 router.include_router(debug_router, prefix="/debug", tags=["Debug"])
 

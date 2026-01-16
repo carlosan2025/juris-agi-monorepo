@@ -142,15 +142,14 @@ export function Sidebar({ className }: SidebarProps) {
   return (
     <aside className={cn('h-full w-56 bg-card border-r flex flex-col', className)}>
       {/* Logo */}
-      <div className="h-14 flex items-center px-4 border-b">
+      <div className="h-14 flex items-center justify-center border-b">
         <Link href="/company/portfolios">
           <Image
             src="/juris-logo.png"
             alt="Juris"
-            width={80}
-            height={28}
-            className="dark:invert"
-            style={{ width: 'auto', height: 'auto' }}
+            width={56}
+            height={20}
+            className="dark:invert w-14 h-auto"
             priority
           />
         </Link>

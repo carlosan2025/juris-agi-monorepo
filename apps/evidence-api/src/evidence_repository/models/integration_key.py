@@ -3,12 +3,16 @@
 import enum
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Enum, String, Text, func, Boolean
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, Text, func, Boolean
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from evidence_repository.models.base import Base, TimestampMixin, UUIDMixin
+
+if TYPE_CHECKING:
+    from evidence_repository.models.tenant import Tenant
 
 
 class IntegrationProvider(str, enum.Enum):
@@ -29,6 +33,14 @@ class IntegrationKey(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "integration_keys"
+
+    # MULTI-TENANCY: Tenant binding (REQUIRED)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # Provider identification
     provider: Mapped[IntegrationProvider] = mapped_column(
@@ -88,6 +100,14 @@ class IntegrationKey(Base, UUIDMixin, TimestampMixin):
     updated_by: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
+    )
+
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship("Tenant")
+
+    # MULTI-TENANCY: Indexes for tenant-scoped queries
+    __table_args__ = (
+        Index("ix_integration_keys_tenant_provider", "tenant_id", "provider"),
     )
 
     def __repr__(self) -> str:

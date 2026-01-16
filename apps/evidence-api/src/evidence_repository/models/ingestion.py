@@ -14,6 +14,7 @@ from evidence_repository.models.base import Base, TimestampMixin, UUIDMixin
 if TYPE_CHECKING:
     from evidence_repository.models.document import Document, DocumentVersion
     from evidence_repository.models.job import Job
+    from evidence_repository.models.tenant import Tenant
 
 
 class IngestionBatchStatus(str, enum.Enum):
@@ -59,6 +60,14 @@ class IngestionBatch(Base, UUIDMixin, TimestampMixin):
 
     __tablename__ = "ingestion_batches"
 
+    # MULTI-TENANCY: Tenant binding (REQUIRED)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
     # Batch metadata
     name: Mapped[str | None] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text)
@@ -103,6 +112,7 @@ class IngestionBatch(Base, UUIDMixin, TimestampMixin):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # Relationships
+    tenant: Mapped["Tenant"] = relationship("Tenant")
     items: Mapped[list["IngestionItem"]] = relationship(
         "IngestionItem",
         back_populates="batch",
@@ -115,6 +125,8 @@ class IngestionBatch(Base, UUIDMixin, TimestampMixin):
     __table_args__ = (
         Index("ix_ingestion_batches_status_created_at", "status", "created_at"),
         Index("ix_ingestion_batches_source_type", "source_type"),
+        # MULTI-TENANCY: Index for tenant-scoped queries
+        Index("ix_ingestion_batches_tenant_status", "tenant_id", "status"),
     )
 
     @property

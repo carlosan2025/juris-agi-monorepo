@@ -98,6 +98,7 @@ class SearchService:
     async def search(
         self,
         query: str,
+        tenant_id: uuid.UUID,
         limit: int = 10,
         similarity_threshold: float = 0.7,
         project_id: uuid.UUID | None = None,
@@ -112,6 +113,7 @@ class SearchService:
 
         Args:
             query: Search query text.
+            tenant_id: Tenant UUID for multi-tenancy isolation.
             limit: Maximum number of results.
             similarity_threshold: Minimum similarity score (0-1).
             project_id: Optional project to scope search to.
@@ -126,13 +128,14 @@ class SearchService:
             SearchResults with matching spans/chunks as citations.
         """
         start_time = time.time()
-        filters_applied: dict[str, Any] = {}
+        filters_applied: dict[str, Any] = {"tenant_id": str(tenant_id)}
 
         # Build base query depending on mode
         if mode == SearchMode.KEYWORD:
             # Keyword-only search
             results = await self._keyword_search(
                 query=query,
+                tenant_id=tenant_id,
                 limit=limit,
                 project_id=project_id,
                 document_ids=document_ids,
@@ -146,6 +149,7 @@ class SearchService:
             # Combined semantic + keyword search
             results = await self._hybrid_search(
                 query=query,
+                tenant_id=tenant_id,
                 limit=limit,
                 similarity_threshold=similarity_threshold,
                 project_id=project_id,
@@ -160,6 +164,7 @@ class SearchService:
             # Semantic search (default)
             results = await self._semantic_search(
                 query=query,
+                tenant_id=tenant_id,
                 limit=limit,
                 similarity_threshold=similarity_threshold,
                 project_id=project_id,
@@ -198,6 +203,7 @@ class SearchService:
     async def _semantic_search(
         self,
         query: str,
+        tenant_id: uuid.UUID,
         limit: int,
         similarity_threshold: float,
         project_id: uuid.UUID | None,
@@ -227,7 +233,10 @@ class SearchService:
                 ),
                 selectinload(EmbeddingChunk.span),
             )
-            .where(similarity_col >= similarity_threshold)
+            .where(
+                EmbeddingChunk.tenant_id == tenant_id,  # MULTI-TENANCY: Tenant isolation
+                similarity_col >= similarity_threshold,
+            )
             .order_by(similarity_col.desc())
             .limit(fetch_limit)
         )
@@ -313,6 +322,7 @@ class SearchService:
     async def _keyword_search(
         self,
         query: str,
+        tenant_id: uuid.UUID,
         limit: int,
         project_id: uuid.UUID | None,
         document_ids: list[uuid.UUID] | None,
@@ -328,7 +338,7 @@ class SearchService:
             search_terms.extend(keywords)
 
         # Build query using ILIKE for keyword matching
-        conditions = []
+        conditions = [EmbeddingChunk.tenant_id == tenant_id]  # MULTI-TENANCY: Tenant isolation
         for term in search_terms:
             conditions.append(EmbeddingChunk.text.ilike(f"%{term}%"))
 
@@ -431,6 +441,7 @@ class SearchService:
     async def _hybrid_search(
         self,
         query: str,
+        tenant_id: uuid.UUID,
         limit: int,
         similarity_threshold: float,
         project_id: uuid.UUID | None,
@@ -441,9 +452,10 @@ class SearchService:
         spans_only: bool,
     ) -> list[SearchResultItem]:
         """Perform combined semantic + keyword search with score fusion."""
-        # Get semantic results
+        # Get semantic results (tenant_id passed through)
         semantic_results = await self._semantic_search(
             query=query,
+            tenant_id=tenant_id,
             limit=limit,
             similarity_threshold=similarity_threshold,
             project_id=project_id,
@@ -454,9 +466,10 @@ class SearchService:
             spans_only=spans_only,
         )
 
-        # Get keyword results
+        # Get keyword results (tenant_id passed through)
         keyword_results = await self._keyword_search(
             query=query,
+            tenant_id=tenant_id,
             limit=limit,
             project_id=project_id,
             document_ids=document_ids,

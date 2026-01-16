@@ -14,6 +14,7 @@ from evidence_repository.models.base import Base, UUIDMixin
 if TYPE_CHECKING:
     from evidence_repository.models.document import DocumentVersion
     from evidence_repository.models.evidence import Span
+    from evidence_repository.models.tenant import Tenant
 
 
 class EmbeddingChunk(Base, UUIDMixin):
@@ -24,6 +25,14 @@ class EmbeddingChunk(Base, UUIDMixin):
     """
 
     __tablename__ = "embedding_chunks"
+
+    # MULTI-TENANCY: Tenant binding (REQUIRED for vector search filtering)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # Link to document version
     document_version_id: Mapped[uuid.UUID] = mapped_column(
@@ -65,6 +74,7 @@ class EmbeddingChunk(Base, UUIDMixin):
     )
 
     # Relationships
+    tenant: Mapped["Tenant"] = relationship("Tenant")
     document_version: Mapped["DocumentVersion"] = relationship(
         "DocumentVersion",
         back_populates="embedding_chunks",
@@ -75,5 +85,7 @@ class EmbeddingChunk(Base, UUIDMixin):
     __table_args__ = (
         Index("ix_embedding_chunks_document_version", "document_version_id"),
         Index("ix_embedding_chunks_chunk_index", "document_version_id", "chunk_index"),
+        # MULTI-TENANCY: Index for tenant-scoped vector search
+        Index("ix_embedding_chunks_tenant_created", "tenant_id", "created_at"),
         # Vector index will be created via migration with proper operator class
     )

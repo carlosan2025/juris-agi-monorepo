@@ -23,6 +23,8 @@ from evidence_repository.models import (
     Project,
     ProjectDocument,
     Span,
+    Tenant,
+    TenantAPIKey,
 )
 
 # Alembic Config object

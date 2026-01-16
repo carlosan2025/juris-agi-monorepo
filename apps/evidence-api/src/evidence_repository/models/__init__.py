@@ -77,8 +77,12 @@ from evidence_repository.models.quality import (
     QualityConflict,
     QualityOpenQuestion,
 )
+from evidence_repository.models.tenant import Tenant, TenantAPIKey
 
 __all__ = [
+    # Tenant (Multi-tenancy)
+    "Tenant",
+    "TenantAPIKey",
     # Base
     "Base",
     "TimestampMixin",

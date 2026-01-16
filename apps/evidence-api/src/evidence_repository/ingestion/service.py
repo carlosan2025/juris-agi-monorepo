@@ -48,15 +48,18 @@ class IngestionService:
         document_id: uuid.UUID,
         version_number: int,
         filename: str,
+        tenant_id: uuid.UUID | None = None,
     ) -> str:
         """Generate a storage path for a document version.
 
-        Path format: documents/{document_id}/v{version_number}/{filename}
+        Path format: tenants/{tenant_id}/documents/{document_id}/v{version_number}/{filename}
+        If tenant_id is None (legacy mode): documents/{document_id}/v{version_number}/{filename}
 
         Args:
             document_id: Document UUID.
             version_number: Version number.
             filename: Original filename.
+            tenant_id: Optional tenant UUID for path prefixing.
 
         Returns:
             Storage path string.
@@ -68,13 +71,17 @@ class IngestionService:
         if not safe_filename:
             safe_filename = "document"
 
+        # Include tenant prefix for multi-tenancy
+        if tenant_id:
+            return f"tenants/{tenant_id}/documents/{document_id}/v{version_number}/{safe_filename}"
         return f"documents/{document_id}/v{version_number}/{safe_filename}"
 
-    async def find_by_hash(self, file_hash: str) -> Document | None:
-        """Find an existing document by its content hash.
+    async def find_by_hash(self, file_hash: str, tenant_id: uuid.UUID) -> Document | None:
+        """Find an existing document by its content hash within a tenant.
 
         Args:
             file_hash: SHA-256 hash of file content.
+            tenant_id: Tenant UUID for isolation.
 
         Returns:
             Document if found, None otherwise.
@@ -84,6 +91,7 @@ class IngestionService:
             select(Document)
             .options(selectinload(Document.versions))
             .where(
+                Document.tenant_id == tenant_id,
                 Document.file_hash == file_hash,
                 Document.deleted_at.is_(None),
             )
@@ -95,6 +103,7 @@ class IngestionService:
         filename: str,
         content_type: str,
         data: bytes,
+        tenant_id: uuid.UUID,
         metadata: dict | None = None,
         profile_code: str = "general",
     ) -> tuple[Document, DocumentVersion]:
@@ -104,6 +113,7 @@ class IngestionService:
             filename: Original filename.
             content_type: MIME type.
             data: File content.
+            tenant_id: Tenant UUID for multi-tenancy isolation.
             metadata: Optional document metadata.
             profile_code: Industry profile for extraction (vc, pharma, insurance, general).
 
@@ -112,8 +122,8 @@ class IngestionService:
         """
         file_hash = self.compute_file_hash(data)
 
-        # Check for existing document with same hash
-        existing = await self.find_by_hash(file_hash)
+        # Check for existing document with same hash within tenant
+        existing = await self.find_by_hash(file_hash, tenant_id)
         if existing:
             # Update profile if different
             if existing.profile_code != profile_code:
@@ -124,6 +134,7 @@ class IngestionService:
 
         # Create new document
         document = Document(
+            tenant_id=tenant_id,
             filename=filename,
             original_filename=filename,
             content_type=content_type,
@@ -139,6 +150,7 @@ class IngestionService:
             document=document,
             data=data,
             content_type=content_type,
+            tenant_id=tenant_id,
         )
 
         return document, version
@@ -148,6 +160,7 @@ class IngestionService:
         document: Document,
         data: bytes,
         content_type: str,
+        tenant_id: uuid.UUID | None = None,
         metadata: dict | None = None,
     ) -> DocumentVersion:
         """Create a new version of an existing document.
@@ -156,6 +169,7 @@ class IngestionService:
             document: Parent document.
             data: File content.
             content_type: MIME type.
+            tenant_id: Optional tenant UUID for storage path prefixing.
             metadata: Optional version metadata.
 
         Returns:
@@ -175,11 +189,15 @@ class IngestionService:
         if max_version:
             version_number = max_version + 1
 
-        # Generate storage path
+        # Use tenant_id from document if not provided
+        effective_tenant_id = tenant_id or getattr(document, 'tenant_id', None)
+
+        # Generate storage path with tenant prefix
         storage_path = self.generate_storage_path(
             document_id=document.id,
             version_number=version_number,
             filename=document.filename,
+            tenant_id=effective_tenant_id,
         )
 
         # Upload to storage
@@ -187,7 +205,11 @@ class IngestionService:
             key=storage_path,
             data=data,
             content_type=content_type,
-            metadata={"document_id": str(document.id), "version": str(version_number)},
+            metadata={
+                "document_id": str(document.id),
+                "version": str(version_number),
+                "tenant_id": str(effective_tenant_id) if effective_tenant_id else None,
+            },
         )
 
         # Create version record

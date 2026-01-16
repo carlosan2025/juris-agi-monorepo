@@ -3,13 +3,16 @@
 import enum
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, Enum, Index, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSON, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from evidence_repository.models.base import Base, UUIDMixin
+
+if TYPE_CHECKING:
+    from evidence_repository.models.tenant import Tenant
 
 
 class JobStatus(str, enum.Enum):
@@ -69,6 +72,14 @@ class Job(Base, UUIDMixin):
 
     __tablename__ = "jobs"
 
+    # MULTI-TENANCY: Tenant binding (REQUIRED)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
     # Job type and status
     type: Mapped[JobType] = mapped_column(
         Enum(JobType, values_callable=lambda x: [e.value for e in x]),
@@ -117,11 +128,17 @@ class Job(Base, UUIDMixin):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship("Tenant")
+
     # Indexes for common queries
     __table_args__ = (
         Index("ix_jobs_status_created_at", "status", "created_at"),
         Index("ix_jobs_type_status", "type", "status"),
         Index("ix_jobs_priority_created_at", "priority", "created_at"),
+        # MULTI-TENANCY: Indexes for tenant-scoped queries
+        Index("ix_jobs_tenant_status", "tenant_id", "status"),
+        Index("ix_jobs_tenant_type", "tenant_id", "type"),
     )
 
     @property

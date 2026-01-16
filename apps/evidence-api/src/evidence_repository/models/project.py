@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from evidence_repository.models.document import Document, DocumentVersion
     from evidence_repository.models.evidence import Claim, EvidencePack, Metric
     from evidence_repository.models.folder import Folder
+    from evidence_repository.models.tenant import Tenant
 
 
 class Project(Base, UUIDMixin, TimestampMixin):
@@ -24,6 +25,14 @@ class Project(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "projects"
+
+    # MULTI-TENANCY: Tenant binding (REQUIRED)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # Core fields
     name: Mapped[str] = mapped_column(String(255), nullable=False)

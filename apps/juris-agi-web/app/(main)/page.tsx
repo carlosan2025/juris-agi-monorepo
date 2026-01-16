@@ -7,7 +7,7 @@ export default function MainPage() {
   const router = useRouter();
 
   useEffect(() => {
-    router.replace('/projects');
+    router.replace('/mandates');
   }, [router]);
 
   return null;

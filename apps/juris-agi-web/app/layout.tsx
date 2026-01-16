@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { ActiveContextProvider } from "@/contexts/ActiveContext";
+import { Providers } from "@/components/providers/Providers";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -21,9 +21,9 @@ export default function RootLayout({
   return (
     <html lang="en" className={inter.variable}>
       <body className={`${inter.className} antialiased`}>
-        <ActiveContextProvider>
+        <Providers>
           {children}
-        </ActiveContextProvider>
+        </Providers>
       </body>
     </html>
   );
