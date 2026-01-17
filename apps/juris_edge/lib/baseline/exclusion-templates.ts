@@ -990,6 +990,21 @@ export const EXCLUSION_TEMPLATES: ExclusionTemplate[] = [
 // =============================================================================
 
 /**
+ * Get all exclusion templates
+ */
+export function getAllTemplates(): ExclusionTemplate[] {
+  return EXCLUSION_TEMPLATES;
+}
+
+/**
+ * Get templates for a specific industry
+ * @alias getExclusionTemplatesForIndustry
+ */
+export function getTemplatesForIndustry(industry: string): ExclusionTemplate[] {
+  return getExclusionTemplatesForIndustry(industry);
+}
+
+/**
  * Get templates for a specific industry
  */
 export function getExclusionTemplatesForIndustry(industry: string): ExclusionTemplate[] {
