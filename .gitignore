@@ -61,3 +61,25 @@ data/
 media/*.mp4
 *.mp4
 media/
+
+# =============================================================================
+# PROTECTED IP - Not to be committed to public repos
+# =============================================================================
+
+# Core API - The crown-jewel reasoning engine (IP protected)
+apps/juris_core_api/
+apps/juris-core-api/
+
+# Deprecated apps - not needed
+apps/juris-agi-web/
+apps/juris_admin_api/
+apps/mock-evidence-api/
+
+# Zip files
+*.zip
+
+# =============================================================================
+# Local development data
+# =============================================================================
+/data/tenants/
+/configs/tenants.json
